@@ -1,0 +1,9 @@
+lat	lon	title	description	icon	iconSize	iconOffset
+53.13872222222222	-3.9510000000000005	Wild Ponies.	<a  href=javascript:popUp("./images/DSCF1822.JPG")> <img src="./images/thumb.DSCF1822.JPG" alt="photo" />  </a><br>	icon_blue.png	24,24	0,-24
+53.14277777777778	-3.9527222222222225	Clag on Carnedd Llewelyn..	<a  href=javascript:popUp("./images/DSCF1829.JPG")> <img src="./images/thumb.DSCF1829.JPG" alt="photo" />  </a><br>	icon_blue.png	24,24	0,-24
+53.159305555555555	-3.963722222222222	Camping Near Summit.	<a  href=javascript:popUp("./images/DSCF1834.JPG")> <img src="./images/thumb.DSCF1834.JPG" alt="photo" />  </a><br>	icon_blue.png	24,24	0,-24
+
+53.15952777777778	-3.9688333333333334	Ella	<p>Summit of Carnedd Llewelyn.</p><a  href=javascript:popUp("./images/DSCF1852.JPG")> <img src="./images/thumb.DSCF1852.JPG" alt="photo" />  </a><br>	icon_blue.png	24,24	0,-24
+53.147666666666666	-3.992805555555556	Black Ladders.	<a  href=javascript:popUp("./images/DSCF1858.JPG")> <img src="./images/thumb.DSCF1858.JPG" alt="photo" />  </a><br>	icon_blue.png	24,24	0,-24
+53.14769444444445	-3.9999166666666666	Snowdon in Distance.	<a  href=javascript:popUp("./images/DSCF1860.JPG")> <img src="./images/thumb.DSCF1860.JPG" alt="photo" />  </a><br>	icon_blue.png	24,24	0,-24
+53.13677777777777	-3.9995833333333333	Descending Pen yr Ole Wen.	<a  href=javascript:popUp("./images/DSCF1867.JPG")> <img src="./images/thumb.DSCF1867.JPG" alt="photo" />  </a><br>	icon_blue.png	24,24	0,-24
