@@ -1,0 +1,727 @@
+:SETUP:
+#+TITLE: Linux Format GPS Article.
+#+STARTUP: overview indent
+#+DRAWERS: PROPERTIES NOTES SETUP
+#+STARTUP: hidestars
+#+FILETAGS: Computer
+#+OPTIONS: H:2 num:nil tags:nil toc:1 timestamps:t
+
+:END:
+
+* Map Your Walk Using Open Source Tools.
+
+As a mountaineering and cycling enthusiast, I use my GPS to record my
+track and my digital camera to record the views. To share my
+experiences, I wanted to be able to show my track on a map in a web
+browser. Like Google Maps I wanted to link my photos to a Point of
+Interest (POI) on the map and pop up the photo when the user clicked
+on the POI.
+
+The whole process involves using a disparate collection of open source
+tools. First to extract tracks from the GPS, then geotag the photos
+using the GPS data and finally to display both the track and the
+photos on a map using the OpenLayers JavaScript library.
+
+* Downloading Data from Your GPS.
+
+The initial step is getting the data from your GPS. I have a Garmin
+eTrex, which has a serial port. However, many newer devices come with usb
+ports. If your GPS unit has a serial port, you will probably need to
+get a usb to serial cable. These are widely available on eBay.
+
+We shall use GPSBabel to download the tracks and waypoints from the
+GPS.  GPSBabel is the Swiss Army knife of the GPS world. It converts
+waypoints, tracks and routes between many different formats.
+
+If you are using a serial to usb converter, when you plug it in to
+your computer and run dmesg you should get output similar to:
+
+#+BEGIN_SRC sh
+[ 5753.489759] usb 5-1: pl2303 converter now attached to ttyUSB0
+[ 5753.489786] usbcore: registered new interface driver pl2303
+[ 5753.489789] pl2303: Prolific PL2303 USB to serial adaptor driver
+
+#+END_SRC
+
+In some versions of the kernel, there seems bug with handling serial
+connections. When downloading a track using GPSBabel if it just sits
+there without appearing to do anything, or displaying any error
+messages, you may be experiencing this bug. It's possible to work
+around this by using a horrible hack that turns off handshaking. Open
+a terminal and type:
+
+#+BEGIN_SRC sh
+  stty -F /dev/ttyUSB0 clocal
+#+END_SRC
+
+Then try running your command again. Kernels that are known to be OK
+included the one shipped with Ubuntu Lucid and the current
+3.2.5-1. The kernel that shipped with Ubuntu Maverick had the problem.
+
+If you are using a Garmin GPS, you will get the best results by
+downloading the raw tracklog. Saved tracklogs are stripped of much
+information including time data. If you want to geotag your photos you
+need the time data!
+
+It's best to save your data in gpx format, as this is the most widely
+supported GPS data format. GPS Babel has a GUI front end, which is
+written in Qt. The GUI builds a command line which is passed to
+GPSBabel. The command is displayed in the GUI, so
+once you are familiar with the program you can use the command line to
+download tracks.
+
+Many recent GPS devices have usb ports and will appear as a mass
+storage device, so you can download the tracklog using a file manager.
+
+
+** Specifying a Range of Data to Download.
+
+I only clear the tracklog from my GPS when it's getting full. However,
+I don't really want to download the whole log every time I have been
+for a walk or bike ride. GPSBabel lets you specify a whole range of
+filters, including time ranges, to specify what data is downloaded from
+your GPS. The following command downloads the tracklog for the
+specified day and saves it as a gpx file.
+
+#+begin_quote
+ \fbox{GPSBabel is the Swiss Army knife of the GPS world}
+#+end_quote
+
+
+#+BEGIN_SRC sh
+  gpsbabel -t -i garmin -f /dev/ttyUSB0 -x
+  track,start=20120212000001,stop=20120212235959 -o gpx -F
+  /home/ian/dropbox/gps_tracks/cycling/2012/track_2012-02-13.gpx
+#+END_SRC
+
+** Tracks and Waypoints.
+
+Waypoints are individual points that you create, either directly on
+your gps or using some external program. Tracks are
+automatically created by your gps unit recording points as you
+travel. If you examine a gpx file you will see that tracks and
+waypoints have different element names. Also waypoints usually have more
+meta data such as "name" and "sym" (symbol) associated with them.
+
+#+BEGIN_SRC sh
+  <trkpt lat="52.965817451" lon="-2.554943562">
+  <ele>83.771973</ele>
+  <time>2011-08-22T08:06:23Z</time>
+</trkpt>
+#+END_SRC
+
+#+BEGIN_SRC sh
+  <wpt lat="52.954961881" lon="-2.501553185">
+  <ele>88.566528</ele>
+  <name>001</name>
+  <cmt>001</cmt>
+  <desc>001</desc>
+  <sym>Flag</sym>
+</wpt>
+#+END_SRC
+
+
+* Managing Your gpx Files.
+
+Many of the processes described here will modify your original gpx
+file. it's almost inevitable you will experience an "Oops, I didn't
+mean to do that" moment, usually involving mass deletion of track
+points. Whilst everyone should keep backups, I find that managing my
+gpx files with git to be the best way. Do an initial commit on the raw
+downloaded file and then commits each time you make a major change. If
+you make a big mistake it's easy to revert back to a known state.
+
+* Editing gpx Files.
+
+You will probably want to edit your tracklog to remove superfluous
+points before uploading to to your web server.
+
+Gpx is just xml. However, if you don't like tangling with multiple
+angle brackets in a text editor, there are a number of GUI
+applications that you can use to edit your data. We are going to use
+GPS Prune from Activity Workshop. This is a Java application, so
+should run anywhere that Java does. When you have finished editing
+your data, you should choose Export gpx from the File menu and save
+your data.
+
+* Preparing Your Photos.
+
+Before you can prepare the map there are several steps required to
+prepare our photos and create a text file that contains the data to
+display a Point of Interest (POI) for each photo on the map.
+
+** Correcting the EXIF Data in Your Photos.
+
+If you want to geotag your photos with information from a tracklog,
+the time in your GPS and your camera must be synchronized. If you are
+a geek, you will obviously make sure that your GPS and camera clocks
+are in sync. Well I have to confess that mine aren't.
+
+#+begin_quote
+\fbox{You are a geek, so your camera's clock agrees with your GPS clock?
+Err... I hate to admit this, but mine doesn't.}
+#+end_quote
+
+
+The clock in your GPS is synchronized with the GPS satellite, so
+should always be correct. Almost all digital cameras store information
+about when a photograph was created in EXIF tags. The relevant tags
+are "DateTimeOriginal", "CreateDate" and "TimeCreated". So what you
+need to do is to update these tags using the difference in time
+between the camera's time and the GPS time. We are going to use Phil
+Harvey's [[http://www.sno.phy.queensu.ca/~phil/exiftool/][exiftoool]] to correct the exif information.
+
+In my case the camera's clock was 1hr 21min ahead of the GPS clock, so I
+needed to subtract 21mins from the time in EXIF tags. Using
+exiftool the command is:
+
+#+BEGIN_SRC sh
+  exiftool "-DateTimeOriginal-=0:00:00 01:21:0" \
+  "-CreateDate-=0:00:00 01:21:0" \
+  "-TimeCreated-=0:00:00 01:21:0"  *.JPG
+#+END_SRC
+
+Note the "-" in front of the equals sign, which subtracts the time
+offset. Before updating your exif tags, you will probably want to
+create a backup copy of your photos, in case you make a mistake. You
+can also create a copy of the exif data to a text file for all the
+photos in the current directory using the following command:
+
+#+BEGIN_SRC sh
+  exiftool -s *.JPG > exif_backup.txt
+#+END_SRC
+
+If it all goes pear shaped you can use this to restore the original
+data.
+
+** Geotagging Photos Using GPSPrune.
+
+
+In the next step you will use the exif time stamps in the photos to
+correlate them with the gps tracklog. We shall then write the gps
+position data to the appropriate exif tags in the photos. This process
+is known as geotagging.
+
+Now you are going to use GPS Prune to geotag the photos. Assuming that you have
+corrected any time differences between your GPS track and photos, the
+first step is to load the gps track in GPS prune. From the Photos menu
+choose Add Photos and choose the directory containing your
+photos. From the Photo menu choose Correlate Photos. This dialog has
+various options which allow you to set Correlation Limits, as it's
+likely that the data in your gps traclog and photos match exactly. The
+two most useful options are:
+
+- Time Limit
+- Distance Limit
+
+If the time or distance in the EXIF field and the tracklog are within
+the limits you have set, GPSPrune will consider the photo and tracklog
+point to be correlated.
+
+GPS Prune will then tick the checkbox for every photo where it can
+correlate the exif time with the GPS time. Once you click OK GPSPrune
+wil show points corresponding to each photo on your track
+log. Clicking on the point will display the associated photo.
+
+You can then write the latitude and longitude information to the
+relevant EXIF field in each photo. Select save to EXIF from the Photo
+menu. This will display a list of photos to which the EXIF data will
+be written. As a safety measure, you can choose not to overwrite the
+original photos, in which case they will be copied to a file with the
+extension "_original".
+
+GPSPrune will now append new track points to the end of your gps
+file, with the position of each photograph, time stamp and the photo's
+full path and file name. An example is shown below:
+
+#+BEGIN_SRC sh
+<trkpt lat="53.06943558"
+lon="-4.18059098"><ele>749</ele><time>2011-02-20T09:53:57Z</time>
+<link
+href="/home/ian/Pictures/Holidays/North_Wales/2011-02-North_Wales/20022011085.jpg">
+<text>20022011085.jpg</text></link></trkpt>
+#+END_SRC
+
+** Creating Thumbnails of Your Photos.
+
+You need to create a thumbnail for each image you want to display on the
+map. There are dozens of ways to do this, but you will use a simple
+shell script, which calls the imagemagick convert program to make
+thumbnails 75px wide. The thumbnails use the original filename
+prefixed with .thumb.
+
+Place the script in the directory containing the photos and run:
+
+#+BEGIN_SRC sh :shebang #!/bin/sh :tangle ~/dropbox/org/org_files/computer/Linux_Format/GPS/scripts/thumbnail.sh :exports code :noweb yes
+FILES="$@"
+for i in $FILES
+do
+echo "Prcoessing image $i ..."
+/usr/bin/convert -thumbnail 75 $i thumb.$i
+done
+#+END_SRC
+
+
+#+BEGIN_SRC sh
+  ./thumbnail.sh *.JPG
+#+END_SRC
+
+which will create thumbnails from any files in the directory with the
+extension .JPG.
+
+** Creating a Text File Containing the POI Data for the Photos.
+
+In order to show the position where each photo was taken on our map,
+you will create a Point of Interest (POI) corresponding to each one.
+Luckily OpenLayers will load the data to display the POI from a file,
+so you don't have to add each POI manually. The various data fields are
+show below. Note that fields must be tab separated and records
+separated by a line feed.
+#+BEGIN_SRC sh
+  lat lon title description icon iconSize iconOffset
+
+#+END_SRC
+
+Url's can be placed in the text field. We shall use this to display
+a thumbnail of the photo, plus a link to the full sized image and some
+descriptive text.
+
+You need to extract the track points, which contain the photo data,
+from the gpx file you created by geotagging the photos with
+GPSPrune. GPSPrune helpfully appends this data to the end of your gpx
+tracklog, so e can easily extract it using a text editor. Copy the xml
+data taking care that you include all the necessary tags and paste it
+into the template below. Note the template contains a single track
+point which shows what the correct syntax should be. Save the data to
+a file e.g. photos.gpx
+
+#+BEGIN_SRC sh
+  <?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.0" creator="GpsPrune v13 activityworkshop.net"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xmlns="http://www.topografix.com/GPX/1/0" xsi:schemaLocation="http://www.topografix.com/GPX/1/0 http://www.topografix.com/GPX/1/0/gpx.xsd">
+
+	<name>Your Walk Name</name>
+	<desc>Export from GPSPrune</desc>
+	<trk><name>Your Walk Description</name><number>1</number>
+	<trkseg>
+		<trkpt lat="53.13602777777778"
+	lon="-3.9945555555555554"><ele>575</ele>
+    <link href="./images/DSCF1869.JPG"><text>DSCF1869.JPG</text></link></trkpt>
+	</trkseg>
+
+</trk>
+
+</gpx>
+#+END_SRC
+
+Now you need to convert the XML photo data from the photos.gpx file you
+created, to tab separated data used to display the POI with
+OpenLayers.  Since the data is just XML you will use a python
+script to do the conversion.
+
+#+BEGIN_SRC python :shebang #!/usr/bin/python2 :tangle ~/dropbox/org/org_files/computer/Linux_Format/GPS/scripts/generate_poi.py :exports code :noweb yes
+#!/usr/bin/python2
+# Shebang is for Arch. You may need to
+# change this to !/usr/bin/env python
+
+import urllib, os, sys
+import os.path
+from xml.dom import minidom
+
+
+# Edit these variables.
+gpxFile = "carneddau_photos.gpx" # gpx file containing POI data.
+icon = "icon_blue.png" # Icon used to denote POI.
+iconSize = "24,24"
+iconOffset = "0,-24" # Offset icon from POI so it doesn't obscure the POI.
+
+# Placeholder. You will need to edit the titles manually
+# in the text file.
+title = "My Title."
+
+dom = minidom.parse(gpxFile)
+
+# Get a list containing the trackpoint nodes.
+trkpt = dom.getElementsByTagName('trkpt')
+
+def make_href(link):
+    """
+    Construct a url from the image file name. The url will display the
+    thumbnail and a link to full size photo.
+    """
+
+    # Break up filename into path and filename components.
+    dir, fname = os.path.split(link)
+
+    # Construct the link.
+    href = ('<a  href=javascript:popUp("%s")> <img src="%s/thumb.%s" alt="photo" />  </a><br>') % (link, dir, fname)
+
+    return href
+
+
+# Print out the position data, Title,icon data and a url
+# containing the photo information in tab separated format.
+print "lat\tlon\ttitle\tdescription\ticon\ticonSize\ticonOffset"
+for trk in trkpt:
+    lat =  trk.getAttribute('lat')
+    lon =  trk.getAttribute('lon')
+    link = trk.getElementsByTagName('link')
+
+    # Turn the image filename into a url.
+    for linkname in link:
+        mylink = make_href(linkname.getAttribute('href'))
+
+    # print the result to stdout. You can redirect
+    # this to a filename.
+    print ("%s\t%s\t%s\t%s\t%s\t%s\t%s" ) % (lat, lon, title, mylink, icon, iconSize, iconOffset)
+
+# We need a final blank line at the end of the file
+print "\n"
+#+END_SRC
+
+Run the script and redirect the output to a file:
+
+./generate_poi.py > poi.txt
+
+The output of the script should look like:
+
+#+BEGIN_SRC sh
+  lat	lon	title	description	icon	iconSize	iconOffset
+53.123361111111116	-3.9654722222222225	My Title.	<a  href=javascript:popUp('./images/DSCF1813_1.JPG') rel="lightbox"> <img src="./images/DSCF1813_1.JPG" alt="wombat" />  </a><br>	icon_blue.png	24,24	0,-24
+#+END_SRC
+
+Note that you must have a trailing blank line at the end of the file,
+or the last POI won't be displayed. Place the generated file (poi.txt)
+in the same directory as the html page that generates the map.
+
+
+* Displaying Your Track and Photos on a Map.
+
+Now you have the geotagged photos, thumbnails and a text file
+containing the information to display the photos as POI on a map. The
+final stage is to create an html page that contains all the
+information required to load the map data, and to display the tracklog
+and photos. You can use almost any web server, since all the work is
+done in the browser.
+
+To display the map an associated information we will use the
+OpenLayers JavaScript library.
+
+** OpenLayers.
+
+
+#+begin_quote
+\fbox{The OpenLayers library is extensive and seems overwhelming at first
+sight.}
+#+end_quote
+
+Openlayers is an open source JavaScript library for displaying map
+data. It works with most modern browsers and is completely client
+based, requiring no special software on the server. Using OpenLayers
+you can display your data with the same JavaScript using maps from all
+the common mapping providers, including Google, Ordnance Survey and
+OpenStreetMap.
+
+However, if you want to use Google Maps or the Ordnance Survey, you
+will need t sign up to obtain an API key. You should read their Terms
+and Conditions carefully, as there are various restrictions on how you
+can use the data. In contrast OpenStreetmaps is completely free.
+
+Which service you use depends on your particular requirements. In the
+UK I find that the Ordnance Survey is best for displaying walking
+data, but OpenStreetMap is best for cycling maps. However, using the
+OpenLayers LayerSwitcher widget, you can toggle your map between the
+different mapping systems, so you can use all three on the same web
+page if you wish.
+
+The OpenLayers library is extensive and seems overwhelming at first
+sight. Luckily, there are plenty of examples to get you started. We
+are going to use the gpx file you created earlier to show the track on
+an OpenStreetMap. The map will also show the POI you created
+corresponding to the locations where you took photos. Clicking on a POI
+will display a pop up window showing a caption and a thumbnail of the
+photo. Clicking on the thumbnail will display the full size photo in a
+popup window.
+
+*** Displaying a GPS Track on Your Map.
+:PROPERTIES:
+:ID: 17699c5c-2b5a-4a4f-acb0-9e44205b486f
+:END:
+
+#+begin_quote
+\fbox{Make sure that your page has a valid DOCTYPE, or weird things will
+happen.}
+#+end_quote
+
+The first step is to generate a page that displays a map of the area
+you are interested in. You are going to use the OpenLayers
+LayerSwitcher, which will let you switch between various OpenStreetMap
+layers. You can also use it to switch between different maps
+e.g. Google and OpenStreetMap.
+
+The complete code for the web page is too big to show here, but is
+included on the DVD.
+
+Here are some tips and tricks:
+
+- Make sure that your page has a valid DOCTYPE, or weird things will happen.
+- You could host all the JavaScript files on your own server.
+  However, you will ensure that you get all the latest fixes (and new
+  bugs too) if you refer to the library on the remote site.
+- If you are using Google Maps or the Ordnance Survey make sure that
+  you are using a valid API key. The key is locked to your domain name
+  and won't work on a different site.
+- If you are using OpenStreetMaps the Cycle Map layer is also the best
+  for displaying walking data, as it displays contour lines.
+
+The code displaying the map layer is in a single Javascript
+block. First you declare some variables that tell the map what
+latitude and longitude it should be centred on. Various other
+attributes, such showing the layer switcher and the pan and zoom bar
+are defined.
+
+#+BEGIN_SRC html :tangle ~/dropbox/org/org_files/computer/Linux_Format/GPS/html/index.html :exports code :noweb yes
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+<head>
+	<title>Simple OSM GPX Track</title>
+	<!-- bring in the OpenLayers javascript library
+		 (here we bring it from the remote site, but you could
+		 easily serve up this javascript yourself) -->
+	<script src="http://www.openlayers.org/api/OpenLayers.js"></script>
+	<!-- bring in the OpenStreetMap OpenLayers layers.
+		 Using this hosted file will make sure we are kept up
+		 to date with any necessary changes -->
+	<script src="http://www.openstreetmap.org/openlayers/OpenStreetMap.js"></script>
+
+<script type="text/javascript">
+<!-- Create a popup window to display the full size -->
+<!-- photo when the thumbnail is clicked. -->
+
+
+<!-- Begin
+function popUp(URL) {
+day = new Date();
+id = day.getTime();
+eval("page" + id + " = window.open(URL, '" + id + "', 'toolbar=0,scrollbars=1,location=0,statusbar=1,menubar=0,resizable=1,width=800,height=600,left = 540,top = 250');");
+}
+// End -->
+</script>
+
+
+	<script type="text/javascript">
+		// Start position for the map. Hardcoded, but you
+		// might want to get this from url params.
+
+		var lat=53.12540
+		var lon= -3.98600
+		var zoom=13
+
+		var map; //complex object of type OpenLayers.Map
+
+		function init() {
+			map = new OpenLayers.Map ("map", {
+				controls:[
+					new OpenLayers.Control.Navigation(),
+					new OpenLayers.Control.PanZoomBar(),
+					new OpenLayers.Control.LayerSwitcher(),
+					new OpenLayers.Control.Attribution()],
+				maxExtent: new OpenLayers.Bounds(-20037508.34,-20037508.34,20037508.34,20037508.34),
+				maxResolution: 156543.0399,
+				numZoomLevels: 19,
+				units: 'm',
+				projection: new OpenLayers.Projection("EPSG:900913"),
+				displayProjection: new OpenLayers.Projection("EPSG:4326")
+			} );
+
+
+
+			// Define the map layer
+			// Here we use a predefined layer that will be
+			// kept up to date with URL changes.
+                  // We are using three OpenStreetMap lyaers.
+			layerMapnik = new OpenLayers.Layer.OSM.Mapnik("Mapnik");
+			map.addLayer(layerMapnik);
+			layerTilesAtHome = new OpenLayers.Layer.OSM.Osmarender("Osmarender");
+			map.addLayer(layerTilesAtHome);
+			layerCycleMap = new OpenLayers.Layer.OSM.CycleMap("CycleMap");
+			map.addLayer(layerCycleMap);
+
+                  // A layer to show markers e.g. start point
+			layerMarkers = new OpenLayers.Layer.Markers("Markers");
+			map.addLayer(layerMarkers);
+
+			// Add the Layer with the GPX Track
+			var lgpx = new OpenLayers.Layer.GML("Carneddau", "carneddau.gpx", {
+				format: OpenLayers.Format.GPX,
+				style: {strokeColor: "green", strokeWidth: 5, strokeOpacity: 0.5},
+				projection: map.displayProjection
+			});
+
+                        map.addLayer(lgpx);
+
+                       // Load our Points of Interest
+                       var pois = new OpenLayers.Layer.Text( "POI",
+                       { location:"poi.txt",
+                            projection: map.displayProjection
+                        });
+
+                       map.addLayer(pois);
+
+
+
+			var lonLat = new OpenLayers.LonLat(lon, lat).transform(new OpenLayers.Projection("EPSG:4326"), map.getProjectionObject());
+			map.setCenter(lonLat, zoom);
+
+                  // Add a marker to show the start point.
+			var size = new OpenLayers.Size(21, 25);
+			var offset = new OpenLayers.Pixel(-(size.w/2), -size.h);
+			var icon = new OpenLayers.Icon('http://www.openstreetmap.org/openlayers/img/marker.png',size,offset);
+			layerMarkers.addMarker(new OpenLayers.Marker(lonLat,icon));
+		}
+
+	</script>
+
+</head>
+<!-- body.onload is called once the page is loaded (call the 'init' function) -->
+
+<body onload="init();">
+	<!-- define a DIV into which the map will appear. Make it take
+	up the whole window -->
+
+<div id="map" style="width: 800px; height: 600px; position: fixed;">
+
+<ul>
+<li>Click the "+" symbol in the top right hand corner of the map to
+display the Layer Switcher.</li>
+<li> The green solid line show the gps track.</li>
+<li>Click on a POI to display a popup thumbnail.</li>
+</ul>
+</div>
+
+</body>
+</html>
+
+#+END_SRC
+
+Now you need to add the layer that displays your gpx track on the map
+in its own layer. "Carneddau" is the name of the track that is
+displayed in the layer switcher. If you want to display more than one
+track, just copy this section and change the values appropriately.
+
+#+BEGIN_SRC html
+
+			// Add the Layer with the GPX Track
+			var lgpx = new OpenLayers.Layer.GML("Carneddau", "carneddau.gpx", {
+				format: OpenLayers.Format.GPX,
+				style: {strokeColor: "green", strokeWidth: 5, strokeOpacity: 0.5},
+				projection: map.displayProjection
+			});
+
+                        map.addLayer(lgpx);
+#+END_SRC
+
+Next you define the layer that will show your Points of Interest:
+
+#+BEGIN_SRC html
+
+                       // Load our Points of Interest
+                       var pois = new OpenLayers.Layer.Text( "POI",
+                       { location:"poi.txt",
+                            projection: map.displayProjection
+                        });
+
+                       map.addLayer(pois);
+
+#+END_SRC
+
+Finally you can add a marker to show where you started and finished
+the walk.
+
+#+BEGIN_SRC html
+                  // Add a marker to show the start point.
+			var size = new OpenLayers.Size(21, 25);
+			var offset = new OpenLayers.Pixel(-(size.w/2), -size.h);
+			var icon = new OpenLayers.Icon('http://www.openstreetmap.org/openlayers/img/marker.png',size,offset);
+			layerMarkers.addMarker(new OpenLayers.Marker(lonLat,icon));
+
+#+END_SRC
+
+You must define a div in the body section of the page
+where you want the map to appear. Note that the name of the div is the
+same as the layer used to define the map; being imaginative I called
+it "map":
+#+BEGIN_SRC html
+<div id="map" style="width: 800px; height: 600px; position: fixed;">
+#+END_SRC
+
+When the page is loaded the body.onloaded() function calls the
+Javascript init() function that loads all the map data.
+
+**** Showing Photos in a JavaScript Popup Window.
+:PROPERTIES:
+:ID: d78211ec-69b1-4c7a-b0ad-846f5353515e
+:END:
+When you click on the thumbnail displayed in the POI, the full size
+photo is displayed in a popup window. The popup is created using
+JavaScript using the url embedded in the text file containing the data
+for the POI.
+
+* Creating Elevation Charts.
+
+
+I often want to visualise my gpx track as an elevation chart, which
+displays height against distance. If GPSBabel is the Swiss Army knife
+of gps data, gnuplot holds a similar status for graphs. You can
+generate charts via GPSPrune (which uses gnuplot), but it's much more
+flexible if you use gnuplot directly.
+
+We are going to use the python gpxplot script, originally written by
+Sergey Astanin, but forked by me to provide more functionality. My
+fork is available on Github at:
+https://github.com/geekinthesticks/GPX-Tools The script reads data
+from a gpx file and can output charts in several different
+formats. Run ./gpxplot.py --help for a summary of options. You will
+also need to install gnuplot.py, which is available for most distros.
+
+If you don't have gnuplot.py installed using the --gprint option will
+generate a gnuplot script, which you can pass directly to gnuplot from
+the command line.
+
+To plot a chart of distance travelled against altitude to the screen:
+
+#+BEGIN_SRC sh
+  ./gpxplot.py --output-format gnuplot --y-axis elevation \
+     --x-axis distance --tzname 'Europe/London' \
+     --imperial --file carneddau.gpx
+#+END_SRC
+
+
+The default output is metric (heights in metres, distance in
+kilometres), passing the --imperial option will show elevations in
+feet and distances in miles.
+
+If you want to output the plot to an image file, rather than the
+screen use the "--image" option followed by a filename. The image
+format is determined from the file name extension, so "--image
+track.png" would create a png file. Other supported output formats are
+googlechart, gprint, table (columns separated by spaces) and orgtable
+(tables in Emacs org-mode format).
+
+Times in gpx files are normally expressed in UTC format. If
+you want to show your data in local timezone format use the --tzname
+option and pass the time zone in the following format "Europe/London"
+
+Gnuplot has many different options to set colours, titles and a whole
+raft of other parameters. If you want to tweak the output, create a
+gprint file and edit this to produce the formatting that you
+require. The edited gprint file can then be used as input to gnuplot
+to generate your final graph.
+
+* Conclusion.
+
+We have only covered the basics, there is lots more you can do. For
+example you can add map layers for the Ordnance Survey and Google
+Maps, so your users can switch between maps.
+
